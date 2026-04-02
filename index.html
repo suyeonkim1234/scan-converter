@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>사진 → 스캔본 변환기</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Segoe UI', -apple-system, sans-serif;
+    background: #f0f2f5;
+    min-height: 100vh;
+    color: #333;
+  }
+
+  .header {
+    background: #1a1a2e;
+    color: #fff;
+    text-align: center;
+    padding: 28px 20px 22px;
+  }
+  .header h1 { font-size: 26px; font-weight: 700; letter-spacing: -0.5px; }
+  .header p { font-size: 14px; color: #aab; margin-top: 6px; }
+
+  .container {
+    max-width: 900px;
+    margin: 30px auto;
+    padding: 0 20px;
+  }
+
+  /* 드롭존 */
+  .dropzone {
+    border: 3px dashed #bcc;
+    border-radius: 16px;
+    padding: 60px 30px;
+    text-align: center;
+    background: #fff;
+    cursor: pointer;
+    transition: all 0.25s;
+    position: relative;
+  }
+  .dropzone:hover, .dropzone.drag-over {
+    border-color: #4a6cf7;
+    background: #f0f4ff;
+    transform: scale(1.01);
+  }
+  .dropzone-icon { font-size: 52px; margin-bottom: 14px; }
+  .dropzone-text { font-size: 18px; color: #555; font-weight: 500; }
+  .dropzone-sub { font-size: 13px; color: #999; margin-top: 8px; }
+  .dropzone input[type="file"] {
+    position: absolute; inset: 0; opacity: 0; cursor: pointer;
+  }
+
+  /* 옵션 패널 */
+  .options {
+    background: #fff;
+    border-radius: 14px;
+    padding: 24px 28px;
+    margin-top: 20px;
+    display: none;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+  }
+  .options.show { display: block; }
+  .options h3 { font-size: 16px; margin-bottom: 16px; color: #1a1a2e; }
+
+  .opt-row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+  }
+  .opt-row label {
+    min-width: 90px;
+    font-size: 14px;
+    font-weight: 600;
+    color: #555;
+  }
+  .opt-row input[type="range"] { flex: 1; min-width: 160px; accent-color: #4a6cf7; }
+  .opt-row .val { font-size: 13px; color: #4a6cf7; font-weight: 700; min-width: 40px; }
+
+  .preset-btns {
+    display: flex; gap: 10px; margin-bottom: 18px; flex-wrap: wrap;
+  }
+  .preset-btn {
+    padding: 8px 18px;
+    border: 2px solid #ddd;
+    border-radius: 8px;
+    background: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .preset-btn:hover { border-color: #4a6cf7; color: #4a6cf7; }
+  .preset-btn.active { border-color: #4a6cf7; background: #4a6cf7; color: #fff; }
+
+  /* 미리보기 */
+  .preview-area {
+    display: none;
+    margin-top: 24px;
+    gap: 20px;
+  }
+  .preview-area.show {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+  @media (max-width: 700px) {
+    .preview-area.show { grid-template-columns: 1fr; }
+  }
+
+  .preview-box {
+    background: #fff;
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+  }
+  .preview-box .label {
+    padding: 12px 18px;
+    font-size: 14px;
+    font-weight: 700;
+    color: #fff;
+    text-align: center;
+  }
+  .preview-box.original .label { background: #666; }
+  .preview-box.scanned .label { background: #4a6cf7; }
+  .preview-box .img-wrap {
+    padding: 16px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 200px;
+    background: #f8f8f8;
+  }
+  .preview-box img, .preview-box canvas {
+    max-width: 100%;
+    max-height: 500px;
+    border-radius: 4px;
+    box-shadow: 0 1px 6px rgba(0,0,0,0.1);
+  }
+
+  /* 버튼 */
+  .actions {
+    display: none;
+    justify-content: center;
+    gap: 14px;
+    margin-top: 22px;
+    flex-wrap: wrap;
+  }
+  .actions.show { display: flex; }
+
+  .btn {
+    padding: 13px 32px;
+    border: none;
+    border-radius: 10px;
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .btn-primary { background: #4a6cf7; color: #fff; }
+  .btn-primary:hover { background: #3a5ce5; transform: translateY(-1px); }
+  .btn-secondary { background: #e8e8e8; color: #555; }
+  .btn-secondary:hover { background: #ddd; }
+  .btn-danger { background: #ff5c5c; color: #fff; }
+  .btn-danger:hover { background: #e04040; }
+
+  /* 다중 이미지 리스트 */
+  .multi-list {
+    display: none;
+    margin-top: 20px;
+    gap: 12px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .multi-list.show { display: flex; }
+  .thumb-card {
+    width: 110px;
+    text-align: center;
+    cursor: pointer;
+    border: 3px solid transparent;
+    border-radius: 10px;
+    padding: 6px;
+    transition: all 0.2s;
+    background: #fff;
+  }
+  .thumb-card:hover { border-color: #bcd; }
+  .thumb-card.active { border-color: #4a6cf7; background: #f0f4ff; }
+  .thumb-card img {
+    width: 100%;
+    height: 70px;
+    object-fit: cover;
+    border-radius: 6px;
+  }
+  .thumb-card span { font-size: 11px; color: #777; display: block; margin-top: 4px; }
+
+  .loading {
+    display: none;
+    text-align: center;
+    padding: 30px;
+    font-size: 16px;
+    color: #4a6cf7;
+  }
+  .loading.show { display: block; }
+  .spinner {
+    width: 36px; height: 36px;
+    border: 4px solid #e0e0e0;
+    border-top-color: #4a6cf7;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin: 0 auto 12px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .footer {
+    text-align: center;
+    padding: 30px;
+    font-size: 12px;
+    color: #aaa;
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>사진 → 스캔본 변환기</h1>
+  <p>사진을 드래그하여 넣으면 스캔한 문서처럼 변환합니다</p>
+</div>
+
+<div class="container">
+  <div class="dropzone" id="dropzone">
+    <input type="file" id="fileInput" accept="image/*" multiple>
+    <div class="dropzone-icon">📄</div>
+    <div class="dropzone-text">여기에 사진을 드래그하세요</div>
+    <div class="dropzone-sub">또는 클릭하여 파일 선택 (여러 장 가능)</div>
+  </div>
+
+  <div class="multi-list" id="multiList"></div>
+
+  <div class="options" id="options">
+    <h3>스캔 설정</h3>
+    <div class="preset-btns">
+      <button class="preset-btn active" onclick="applyPreset('bw')">흑백 스캔</button>
+      <button class="preset-btn" onclick="applyPreset('gray')">그레이스케일</button>
+      <button class="preset-btn" onclick="applyPreset('color')">컬러 스캔</button>
+      <button class="preset-btn" onclick="applyPreset('high')">고대비 스캔</button>
+      <button class="preset-btn" onclick="applyPreset('soft')">부드러운 스캔</button>
+    </div>
+    <div class="opt-row">
+      <label>밝기</label>
+      <input type="range" id="brightness" min="-50" max="80" value="15">
+      <span class="val" id="brightnessVal">15</span>
+    </div>
+    <div class="opt-row">
+      <label>대비</label>
+      <input type="range" id="contrast" min="-30" max="100" value="40">
+      <span class="val" id="contrastVal">40</span>
+    </div>
+    <div class="opt-row">
+      <label>채도</label>
+      <input type="range" id="saturation" min="-100" max="100" value="-100">
+      <span class="val" id="saturationVal">-100</span>
+    </div>
+    <div class="opt-row">
+      <label>선명도</label>
+      <input type="range" id="sharpness" min="0" max="100" value="30">
+      <span class="val" id="sharpnessVal">30</span>
+    </div>
+    <div class="opt-row">
+      <label>노이즈 제거</label>
+      <input type="range" id="denoise" min="0" max="5" value="1" step="1">
+      <span class="val" id="denoiseVal">1</span>
+    </div>
+  </div>
+
+  <div class="loading" id="loading">
+    <div class="spinner"></div>
+    변환 중...
+  </div>
+
+  <div class="preview-area" id="previewArea">
+    <div class="preview-box original">
+      <div class="label">원본</div>
+      <div class="img-wrap"><img id="originalImg"></div>
+    </div>
+    <div class="preview-box scanned">
+      <div class="label">스캔본</div>
+      <div class="img-wrap"><canvas id="scanCanvas"></canvas></div>
+    </div>
+  </div>
+
+  <div class="actions" id="actions">
+    <button class="btn btn-primary" onclick="downloadCurrent()">이 이미지 저장</button>
+    <button class="btn btn-primary" onclick="downloadAll()" id="btnDownloadAll" style="display:none;">전체 저장 (ZIP)</button>
+    <button class="btn btn-secondary" onclick="resetAll()">초기화</button>
+  </div>
+</div>
+
+<div class="footer">
+  모든 처리는 브라우저에서 이루어집니다. 사진이 서버로 전송되지 않습니다.
+</div>
+
+<script>
+const dropzone = document.getElementById('dropzone');
+const fileInput = document.getElementById('fileInput');
+const options = document.getElementById('options');
+const previewArea = document.getElementById('previewArea');
+const actions = document.getElementById('actions');
+const loading = document.getElementById('loading');
+const originalImg = document.getElementById('originalImg');
+const scanCanvas = document.getElementById('scanCanvas');
+const multiList = document.getElementById('multiList');
+const btnDownloadAll = document.getElementById('btnDownloadAll');
+
+let images = []; // {file, dataUrl, name}
+let currentIdx = 0;
+let processedBlobs = []; // parallel array of blobs
+
+// 슬라이더 값 표시 연결
+['brightness','contrast','saturation','sharpness','denoise'].forEach(id => {
+  const el = document.getElementById(id);
+  const valEl = document.getElementById(id + 'Val');
+  el.addEventListener('input', () => {
+    valEl.textContent = el.value;
+    if (images.length > 0) processImage();
+  });
+});
+
+// 프리셋
+const presets = {
+  bw:   { brightness: 15, contrast: 40, saturation: -100, sharpness: 30, denoise: 1 },
+  gray: { brightness: 10, contrast: 30, saturation: -100, sharpness: 20, denoise: 1 },
+  color:{ brightness: 10, contrast: 25, saturation: -20,  sharpness: 25, denoise: 1 },
+  high: { brightness: 20, contrast: 70, saturation: -100, sharpness: 50, denoise: 0 },
+  soft: { brightness: 5,  contrast: 15, saturation: -60,  sharpness: 10, denoise: 2 },
+};
+
+function applyPreset(key) {
+  const p = presets[key];
+  document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+  event.target.classList.add('active');
+  Object.keys(p).forEach(k => {
+    document.getElementById(k).value = p[k];
+    document.getElementById(k + 'Val').textContent = p[k];
+  });
+  if (images.length > 0) processImage();
+}
+
+// 드래그 앤 드롭
+dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('drag-over'); });
+dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag-over'));
+dropzone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropzone.classList.remove('drag-over');
+  handleFiles(e.dataTransfer.files);
+});
+fileInput.addEventListener('change', e => handleFiles(e.target.files));
+
+function handleFiles(files) {
+  const imgFiles = Array.from(files).filter(f => f.type.startsWith('image/'));
+  if (imgFiles.length === 0) return;
+
+  images = [];
+  processedBlobs = [];
+  currentIdx = 0;
+
+  let loaded = 0;
+  imgFiles.forEach((file, i) => {
+    const reader = new FileReader();
+    reader.onload = ev => {
+      images[i] = { file, dataUrl: ev.target.result, name: file.name };
+      processedBlobs[i] = null;
+      loaded++;
+      if (loaded === imgFiles.length) {
+        showUI();
+        showThumb(0);
+      }
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function showUI() {
+  options.classList.add('show');
+  previewArea.classList.add('show');
+  actions.classList.add('show');
+
+  // 다중 썸네일
+  if (images.length > 1) {
+    btnDownloadAll.style.display = '';
+    multiList.innerHTML = '';
+    multiList.classList.add('show');
+    images.forEach((img, i) => {
+      const card = document.createElement('div');
+      card.className = 'thumb-card' + (i === 0 ? ' active' : '');
+      card.innerHTML = `<img src="${img.dataUrl}"><span>${i + 1}번</span>`;
+      card.onclick = () => showThumb(i);
+      multiList.appendChild(card);
+    });
+  } else {
+    multiList.classList.remove('show');
+    btnDownloadAll.style.display = 'none';
+  }
+}
+
+function showThumb(idx) {
+  currentIdx = idx;
+  document.querySelectorAll('.thumb-card').forEach((c, i) => c.classList.toggle('active', i === idx));
+  originalImg.src = images[idx].dataUrl;
+  processImage();
+}
+
+function processImage() {
+  loading.classList.add('show');
+
+  requestAnimationFrame(() => {
+    const img = new Image();
+    img.onload = () => {
+      const brightness = +document.getElementById('brightness').value;
+      const contrast = +document.getElementById('contrast').value;
+      const saturation = +document.getElementById('saturation').value;
+      const sharpness = +document.getElementById('sharpness').value;
+      const denoise = +document.getElementById('denoise').value;
+
+      const w = img.naturalWidth;
+      const h = img.naturalHeight;
+      scanCanvas.width = w;
+      scanCanvas.height = h;
+      const ctx = scanCanvas.getContext('2d', { willReadFrequently: true });
+
+      // 노이즈 제거 (blur)
+      if (denoise > 0) {
+        ctx.filter = `blur(${denoise * 0.4}px)`;
+        ctx.drawImage(img, 0, 0, w, h);
+        ctx.filter = 'none';
+      } else {
+        ctx.drawImage(img, 0, 0, w, h);
+      }
+
+      let imageData = ctx.getImageData(0, 0, w, h);
+      let data = imageData.data;
+
+      // 밝기 + 대비 + 채도
+      const bFactor = brightness * 2.55;
+      const cFactor = (259 * (contrast + 255)) / (255 * (259 - contrast));
+      const satFactor = (saturation + 100) / 100;
+
+      for (let i = 0; i < data.length; i += 4) {
+        let r = data[i], g = data[i+1], b = data[i+2];
+
+        // 밝기
+        r += bFactor; g += bFactor; b += bFactor;
+
+        // 대비
+        r = cFactor * (r - 128) + 128;
+        g = cFactor * (g - 128) + 128;
+        b = cFactor * (b - 128) + 128;
+
+        // 채도
+        const gray = 0.299 * r + 0.587 * g + 0.114 * b;
+        r = gray + satFactor * (r - gray);
+        g = gray + satFactor * (g - gray);
+        b = gray + satFactor * (b - gray);
+
+        data[i]   = Math.max(0, Math.min(255, r));
+        data[i+1] = Math.max(0, Math.min(255, g));
+        data[i+2] = Math.max(0, Math.min(255, b));
+      }
+
+      ctx.putImageData(imageData, 0, 0);
+
+      // 선명도 (unsharp mask)
+      if (sharpness > 0) {
+        const amount = sharpness / 100;
+        const tmpCanvas = document.createElement('canvas');
+        tmpCanvas.width = w; tmpCanvas.height = h;
+        const tmpCtx = tmpCanvas.getContext('2d', { willReadFrequently: true });
+        tmpCtx.filter = 'blur(1px)';
+        tmpCtx.drawImage(scanCanvas, 0, 0);
+        const blurred = tmpCtx.getImageData(0, 0, w, h).data;
+        const sharp = ctx.getImageData(0, 0, w, h);
+        const sd = sharp.data;
+        for (let i = 0; i < sd.length; i += 4) {
+          sd[i]   = Math.max(0, Math.min(255, sd[i]   + amount * 2 * (sd[i]   - blurred[i])));
+          sd[i+1] = Math.max(0, Math.min(255, sd[i+1] + amount * 2 * (sd[i+1] - blurred[i+1])));
+          sd[i+2] = Math.max(0, Math.min(255, sd[i+2] + amount * 2 * (sd[i+2] - blurred[i+2])));
+        }
+        ctx.putImageData(sharp, 0, 0);
+      }
+
+      // 미세 노이즈 (스캔 느낌)
+      imageData = ctx.getImageData(0, 0, w, h);
+      data = imageData.data;
+      for (let i = 0; i < data.length; i += 4) {
+        const noise = (Math.random() - 0.5) * 8;
+        data[i]   = Math.max(0, Math.min(255, data[i]   + noise));
+        data[i+1] = Math.max(0, Math.min(255, data[i+1] + noise));
+        data[i+2] = Math.max(0, Math.min(255, data[i+2] + noise));
+      }
+      ctx.putImageData(imageData, 0, 0);
+
+      // blob 저장
+      scanCanvas.toBlob(blob => {
+        processedBlobs[currentIdx] = blob;
+        loading.classList.remove('show');
+      }, 'image/png');
+    };
+    img.src = images[currentIdx].dataUrl;
+  });
+}
+
+function downloadCurrent() {
+  const blob = processedBlobs[currentIdx];
+  if (!blob) return;
+  const name = images[currentIdx].name.replace(/\.[^.]+$/, '') + '_스캔본.png';
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+async function downloadAll() {
+  // 모든 이미지 처리 후 개별 다운로드
+  for (let i = 0; i < images.length; i++) {
+    if (!processedBlobs[i]) {
+      // 아직 처리 안 된 이미지는 처리
+      await processImageAt(i);
+    }
+  }
+  // 하나씩 다운로드
+  for (let i = 0; i < images.length; i++) {
+    const blob = processedBlobs[i];
+    if (!blob) continue;
+    const name = images[i].name.replace(/\.[^.]+$/, '') + '_스캔본.png';
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    await new Promise(r => setTimeout(r, 300));
+  }
+}
+
+function processImageAt(idx) {
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => {
+      const brightness = +document.getElementById('brightness').value;
+      const contrast = +document.getElementById('contrast').value;
+      const saturation = +document.getElementById('saturation').value;
+      const sharpness = +document.getElementById('sharpness').value;
+      const denoise = +document.getElementById('denoise').value;
+
+      const w = img.naturalWidth, h = img.naturalHeight;
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      const ctx = c.getContext('2d', { willReadFrequently: true });
+
+      if (denoise > 0) {
+        ctx.filter = `blur(${denoise * 0.4}px)`;
+        ctx.drawImage(img, 0, 0, w, h);
+        ctx.filter = 'none';
+      } else {
+        ctx.drawImage(img, 0, 0, w, h);
+      }
+
+      let imageData = ctx.getImageData(0, 0, w, h);
+      let data = imageData.data;
+      const bFactor = brightness * 2.55;
+      const cFactor = (259 * (contrast + 255)) / (255 * (259 - contrast));
+      const satFactor = (saturation + 100) / 100;
+
+      for (let i = 0; i < data.length; i += 4) {
+        let r = data[i], g = data[i+1], b = data[i+2];
+        r += bFactor; g += bFactor; b += bFactor;
+        r = cFactor * (r - 128) + 128;
+        g = cFactor * (g - 128) + 128;
+        b = cFactor * (b - 128) + 128;
+        const gray = 0.299 * r + 0.587 * g + 0.114 * b;
+        r = gray + satFactor * (r - gray);
+        g = gray + satFactor * (g - gray);
+        b = gray + satFactor * (b - gray);
+        data[i]   = Math.max(0, Math.min(255, r));
+        data[i+1] = Math.max(0, Math.min(255, g));
+        data[i+2] = Math.max(0, Math.min(255, b));
+      }
+      ctx.putImageData(imageData, 0, 0);
+
+      if (sharpness > 0) {
+        const amount = sharpness / 100;
+        const tmp = document.createElement('canvas');
+        tmp.width = w; tmp.height = h;
+        const tCtx = tmp.getContext('2d', { willReadFrequently: true });
+        tCtx.filter = 'blur(1px)';
+        tCtx.drawImage(c, 0, 0);
+        const blurred = tCtx.getImageData(0, 0, w, h).data;
+        const sharp = ctx.getImageData(0, 0, w, h);
+        const sd = sharp.data;
+        for (let i = 0; i < sd.length; i += 4) {
+          sd[i]   = Math.max(0, Math.min(255, sd[i]   + amount * 2 * (sd[i]   - blurred[i])));
+          sd[i+1] = Math.max(0, Math.min(255, sd[i+1] + amount * 2 * (sd[i+1] - blurred[i+1])));
+          sd[i+2] = Math.max(0, Math.min(255, sd[i+2] + amount * 2 * (sd[i+2] - blurred[i+2])));
+        }
+        ctx.putImageData(sharp, 0, 0);
+      }
+
+      imageData = ctx.getImageData(0, 0, w, h);
+      data = imageData.data;
+      for (let i = 0; i < data.length; i += 4) {
+        const noise = (Math.random() - 0.5) * 8;
+        data[i]   = Math.max(0, Math.min(255, data[i]   + noise));
+        data[i+1] = Math.max(0, Math.min(255, data[i+1] + noise));
+        data[i+2] = Math.max(0, Math.min(255, data[i+2] + noise));
+      }
+      ctx.putImageData(imageData, 0, 0);
+
+      c.toBlob(blob => {
+        processedBlobs[idx] = blob;
+        resolve();
+      }, 'image/png');
+    };
+    img.src = images[idx].dataUrl;
+  });
+}
+
+function resetAll() {
+  images = [];
+  processedBlobs = [];
+  currentIdx = 0;
+  options.classList.remove('show');
+  previewArea.classList.remove('show');
+  actions.classList.remove('show');
+  multiList.classList.remove('show');
+  multiList.innerHTML = '';
+  fileInput.value = '';
+}
+</script>
+</body>
+</html>
