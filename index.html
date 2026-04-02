@@ -24,7 +24,7 @@
   .header p { font-size: 14px; color: #aab; margin-top: 6px; }
 
   .container {
-    max-width: 900px;
+    max-width: 960px;
     margin: 30px auto;
     padding: 0 20px;
   }
@@ -96,6 +96,60 @@
   .preset-btn:hover { border-color: #4a6cf7; color: #4a6cf7; }
   .preset-btn.active { border-color: #4a6cf7; background: #4a6cf7; color: #fff; }
 
+  /* 크롭 영역 */
+  .crop-section {
+    display: none;
+    margin-top: 24px;
+    background: #fff;
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+  }
+  .crop-section.show { display: block; }
+  .crop-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 20px;
+    background: #ff9800;
+    color: #fff;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .crop-header .crop-title { font-size: 15px; font-weight: 700; }
+  .crop-header .crop-hint { font-size: 12px; opacity: 0.9; }
+  .crop-header-btns { display: flex; gap: 8px; }
+  .crop-header-btns button {
+    padding: 6px 16px;
+    border: 2px solid rgba(255,255,255,0.6);
+    border-radius: 6px;
+    background: transparent;
+    color: #fff;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .crop-header-btns button:hover { background: rgba(255,255,255,0.2); }
+  .crop-header-btns .crop-apply-btn { background: #fff; color: #ff9800; border-color: #fff; }
+  .crop-header-btns .crop-apply-btn:hover { background: #f0f0f0; }
+
+  .crop-canvas-wrap {
+    position: relative;
+    display: flex;
+    justify-content: center;
+    background: #222;
+    padding: 10px;
+    overflow: auto;
+    max-height: 70vh;
+    cursor: crosshair;
+  }
+  .crop-canvas-wrap canvas {
+    display: block;
+    max-width: 100%;
+    max-height: 65vh;
+  }
+
   /* 미리보기 */
   .preview-area {
     display: none;
@@ -161,10 +215,10 @@
   }
   .btn-primary { background: #4a6cf7; color: #fff; }
   .btn-primary:hover { background: #3a5ce5; transform: translateY(-1px); }
+  .btn-crop { background: #ff9800; color: #fff; }
+  .btn-crop:hover { background: #e68900; transform: translateY(-1px); }
   .btn-secondary { background: #e8e8e8; color: #555; }
   .btn-secondary:hover { background: #ddd; }
-  .btn-danger { background: #ff5c5c; color: #fff; }
-  .btn-danger:hover { background: #e04040; }
 
   /* 다중 이미지 리스트 */
   .multi-list {
@@ -238,6 +292,23 @@
 
   <div class="multi-list" id="multiList"></div>
 
+  <!-- 크롭 영역 -->
+  <div class="crop-section" id="cropSection">
+    <div class="crop-header">
+      <div>
+        <div class="crop-title">영수증 영역을 드래그로 선택하세요</div>
+        <div class="crop-hint">마우스로 드래그하여 자를 영역을 지정합니다</div>
+      </div>
+      <div class="crop-header-btns">
+        <button onclick="resetCrop()">선택 초기화</button>
+        <button class="crop-apply-btn" onclick="applyCrop()">자르기 적용</button>
+      </div>
+    </div>
+    <div class="crop-canvas-wrap" id="cropWrap">
+      <canvas id="cropCanvas"></canvas>
+    </div>
+  </div>
+
   <div class="options" id="options">
     <h3>스캔 설정</h3>
     <div class="preset-btns">
@@ -291,6 +362,7 @@
   </div>
 
   <div class="actions" id="actions">
+    <button class="btn btn-crop" onclick="openCrop()">영수증 자르기</button>
     <button class="btn btn-primary" onclick="downloadCurrent()">이 이미지 저장</button>
     <button class="btn btn-primary" onclick="downloadAll()" id="btnDownloadAll" style="display:none;">전체 저장 (ZIP)</button>
     <button class="btn btn-secondary" onclick="resetAll()">초기화</button>
@@ -312,10 +384,20 @@ const originalImg = document.getElementById('originalImg');
 const scanCanvas = document.getElementById('scanCanvas');
 const multiList = document.getElementById('multiList');
 const btnDownloadAll = document.getElementById('btnDownloadAll');
+const cropSection = document.getElementById('cropSection');
+const cropCanvas = document.getElementById('cropCanvas');
+const cropWrap = document.getElementById('cropWrap');
 
-let images = []; // {file, dataUrl, name}
+let images = []; // {file, dataUrl, croppedDataUrl, name}
 let currentIdx = 0;
-let processedBlobs = []; // parallel array of blobs
+let processedBlobs = [];
+
+// 크롭 상태
+let cropImg = null;
+let cropScale = 1;
+let cropRect = null; // {x, y, w, h} in image coords
+let isDragging = false;
+let dragStart = null;
 
 // 슬라이더 값 표시 연결
 ['brightness','contrast','saturation','sharpness','denoise'].forEach(id => {
@@ -364,12 +446,13 @@ function handleFiles(files) {
   images = [];
   processedBlobs = [];
   currentIdx = 0;
+  cropSection.classList.remove('show');
 
   let loaded = 0;
   imgFiles.forEach((file, i) => {
     const reader = new FileReader();
     reader.onload = ev => {
-      images[i] = { file, dataUrl: ev.target.result, name: file.name };
+      images[i] = { file, dataUrl: ev.target.result, croppedDataUrl: null, name: file.name };
       processedBlobs[i] = null;
       loaded++;
       if (loaded === imgFiles.length) {
@@ -386,7 +469,6 @@ function showUI() {
   previewArea.classList.add('show');
   actions.classList.add('show');
 
-  // 다중 썸네일
   if (images.length > 1) {
     btnDownloadAll.style.display = '';
     multiList.innerHTML = '';
@@ -407,8 +489,188 @@ function showUI() {
 function showThumb(idx) {
   currentIdx = idx;
   document.querySelectorAll('.thumb-card').forEach((c, i) => c.classList.toggle('active', i === idx));
-  originalImg.src = images[idx].dataUrl;
+  const src = images[idx].croppedDataUrl || images[idx].dataUrl;
+  originalImg.src = src;
   processImage();
+}
+
+// ===== 크롭 기능 =====
+
+function openCrop() {
+  if (images.length === 0) return;
+  cropSection.classList.add('show');
+  cropRect = null;
+
+  cropImg = new Image();
+  cropImg.onload = () => {
+    // 캔버스 크기를 화면에 맞추기
+    const maxW = cropWrap.clientWidth - 20;
+    const maxH = window.innerHeight * 0.6;
+    cropScale = Math.min(maxW / cropImg.naturalWidth, maxH / cropImg.naturalHeight, 1);
+
+    const drawW = Math.round(cropImg.naturalWidth * cropScale);
+    const drawH = Math.round(cropImg.naturalHeight * cropScale);
+    cropCanvas.width = drawW;
+    cropCanvas.height = drawH;
+
+    drawCropCanvas();
+    cropSection.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  };
+  cropImg.src = images[currentIdx].dataUrl; // 항상 원본에서 크롭
+}
+
+function drawCropCanvas() {
+  const ctx = cropCanvas.getContext('2d');
+  const w = cropCanvas.width;
+  const h = cropCanvas.height;
+
+  ctx.clearRect(0, 0, w, h);
+  ctx.drawImage(cropImg, 0, 0, w, h);
+
+  if (cropRect) {
+    const rx = cropRect.x * cropScale;
+    const ry = cropRect.y * cropScale;
+    const rw = cropRect.w * cropScale;
+    const rh = cropRect.h * cropScale;
+
+    // 어두운 오버레이
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(0, 0, w, ry);                        // 위
+    ctx.fillRect(0, ry + rh, w, h - ry - rh);         // 아래
+    ctx.fillRect(0, ry, rx, rh);                       // 왼쪽
+    ctx.fillRect(rx + rw, ry, w - rx - rw, rh);       // 오른쪽
+
+    // 선택 영역 테두리
+    ctx.strokeStyle = '#ff9800';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([6, 4]);
+    ctx.strokeRect(rx, ry, rw, rh);
+    ctx.setLineDash([]);
+
+    // 모서리 핸들
+    ctx.fillStyle = '#ff9800';
+    const hs = 8;
+    [[rx, ry], [rx + rw, ry], [rx, ry + rh], [rx + rw, ry + rh]].forEach(([cx, cy]) => {
+      ctx.fillRect(cx - hs/2, cy - hs/2, hs, hs);
+    });
+
+    // 크기 표시
+    const origW = Math.round(cropRect.w);
+    const origH = Math.round(cropRect.h);
+    ctx.fillStyle = 'rgba(255,152,0,0.85)';
+    const txt = `${origW} x ${origH}`;
+    ctx.font = 'bold 13px sans-serif';
+    const tm = ctx.measureText(txt);
+    const tx = rx + rw/2 - tm.width/2 - 6;
+    const ty = ry - 10;
+    ctx.fillRect(tx, ty - 14, tm.width + 12, 20);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(txt, tx + 6, ty);
+  }
+}
+
+// 크롭 마우스 이벤트
+cropCanvas.addEventListener('mousedown', e => {
+  const rect = cropCanvas.getBoundingClientRect();
+  const x = (e.clientX - rect.left) / cropScale;
+  const y = (e.clientY - rect.top) / cropScale;
+  isDragging = true;
+  dragStart = { x, y };
+  cropRect = { x, y, w: 0, h: 0 };
+});
+
+cropCanvas.addEventListener('mousemove', e => {
+  if (!isDragging || !dragStart) return;
+  const rect = cropCanvas.getBoundingClientRect();
+  const x = (e.clientX - rect.left) / cropScale;
+  const y = (e.clientY - rect.top) / cropScale;
+
+  const imgW = cropImg.naturalWidth;
+  const imgH = cropImg.naturalHeight;
+
+  const cx = Math.max(0, Math.min(dragStart.x, x));
+  const cy = Math.max(0, Math.min(dragStart.y, y));
+  const cw = Math.min(Math.abs(x - dragStart.x), imgW - cx);
+  const ch = Math.min(Math.abs(y - dragStart.y), imgH - cy);
+
+  cropRect = { x: cx, y: cy, w: cw, h: ch };
+  drawCropCanvas();
+});
+
+cropCanvas.addEventListener('mouseup', () => { isDragging = false; });
+cropCanvas.addEventListener('mouseleave', () => { isDragging = false; });
+
+// 터치 지원
+cropCanvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  const t = e.touches[0];
+  const rect = cropCanvas.getBoundingClientRect();
+  const x = (t.clientX - rect.left) / cropScale;
+  const y = (t.clientY - rect.top) / cropScale;
+  isDragging = true;
+  dragStart = { x, y };
+  cropRect = { x, y, w: 0, h: 0 };
+}, { passive: false });
+
+cropCanvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  if (!isDragging || !dragStart) return;
+  const t = e.touches[0];
+  const rect = cropCanvas.getBoundingClientRect();
+  const x = (t.clientX - rect.left) / cropScale;
+  const y = (t.clientY - rect.top) / cropScale;
+
+  const imgW = cropImg.naturalWidth;
+  const imgH = cropImg.naturalHeight;
+
+  const cx = Math.max(0, Math.min(dragStart.x, x));
+  const cy = Math.max(0, Math.min(dragStart.y, y));
+  const cw = Math.min(Math.abs(x - dragStart.x), imgW - cx);
+  const ch = Math.min(Math.abs(y - dragStart.y), imgH - cy);
+
+  cropRect = { x: cx, y: cy, w: cw, h: ch };
+  drawCropCanvas();
+}, { passive: false });
+
+cropCanvas.addEventListener('touchend', () => { isDragging = false; });
+
+function resetCrop() {
+  cropRect = null;
+  if (cropImg) drawCropCanvas();
+}
+
+function applyCrop() {
+  if (!cropRect || cropRect.w < 10 || cropRect.h < 10) {
+    alert('자를 영역을 드래그로 선택해주세요.');
+    return;
+  }
+
+  // 원본 이미지에서 선택 영역만 잘라서 새 dataUrl 생성
+  const c = document.createElement('canvas');
+  const cx = Math.round(cropRect.x);
+  const cy = Math.round(cropRect.y);
+  const cw = Math.round(cropRect.w);
+  const ch = Math.round(cropRect.h);
+  c.width = cw;
+  c.height = ch;
+  const ctx = c.getContext('2d');
+  ctx.drawImage(cropImg, cx, cy, cw, ch, 0, 0, cw, ch);
+
+  const croppedUrl = c.toDataURL('image/png');
+  images[currentIdx].croppedDataUrl = croppedUrl;
+
+  // 크롭 UI 닫기
+  cropSection.classList.remove('show');
+
+  // 미리보기 갱신
+  originalImg.src = croppedUrl;
+  processImage();
+}
+
+// ===== 스캔 처리 =====
+
+function getSourceUrl() {
+  return images[currentIdx].croppedDataUrl || images[currentIdx].dataUrl;
 }
 
 function processImage() {
@@ -429,7 +691,6 @@ function processImage() {
       scanCanvas.height = h;
       const ctx = scanCanvas.getContext('2d', { willReadFrequently: true });
 
-      // 노이즈 제거 (blur)
       if (denoise > 0) {
         ctx.filter = `blur(${denoise * 0.4}px)`;
         ctx.drawImage(img, 0, 0, w, h);
@@ -441,36 +702,26 @@ function processImage() {
       let imageData = ctx.getImageData(0, 0, w, h);
       let data = imageData.data;
 
-      // 밝기 + 대비 + 채도
       const bFactor = brightness * 2.55;
       const cFactor = (259 * (contrast + 255)) / (255 * (259 - contrast));
       const satFactor = (saturation + 100) / 100;
 
       for (let i = 0; i < data.length; i += 4) {
         let r = data[i], g = data[i+1], b = data[i+2];
-
-        // 밝기
         r += bFactor; g += bFactor; b += bFactor;
-
-        // 대비
         r = cFactor * (r - 128) + 128;
         g = cFactor * (g - 128) + 128;
         b = cFactor * (b - 128) + 128;
-
-        // 채도
         const gray = 0.299 * r + 0.587 * g + 0.114 * b;
         r = gray + satFactor * (r - gray);
         g = gray + satFactor * (g - gray);
         b = gray + satFactor * (b - gray);
-
         data[i]   = Math.max(0, Math.min(255, r));
         data[i+1] = Math.max(0, Math.min(255, g));
         data[i+2] = Math.max(0, Math.min(255, b));
       }
-
       ctx.putImageData(imageData, 0, 0);
 
-      // 선명도 (unsharp mask)
       if (sharpness > 0) {
         const amount = sharpness / 100;
         const tmpCanvas = document.createElement('canvas');
@@ -489,7 +740,6 @@ function processImage() {
         ctx.putImageData(sharp, 0, 0);
       }
 
-      // 미세 노이즈 (스캔 느낌)
       imageData = ctx.getImageData(0, 0, w, h);
       data = imageData.data;
       for (let i = 0; i < data.length; i += 4) {
@@ -500,13 +750,12 @@ function processImage() {
       }
       ctx.putImageData(imageData, 0, 0);
 
-      // blob 저장
       scanCanvas.toBlob(blob => {
         processedBlobs[currentIdx] = blob;
         loading.classList.remove('show');
       }, 'image/png');
     };
-    img.src = images[currentIdx].dataUrl;
+    img.src = getSourceUrl();
   });
 }
 
@@ -522,14 +771,11 @@ function downloadCurrent() {
 }
 
 async function downloadAll() {
-  // 모든 이미지 처리 후 개별 다운로드
   for (let i = 0; i < images.length; i++) {
     if (!processedBlobs[i]) {
-      // 아직 처리 안 된 이미지는 처리
       await processImageAt(i);
     }
   }
-  // 하나씩 다운로드
   for (let i = 0; i < images.length; i++) {
     const blob = processedBlobs[i];
     if (!blob) continue;
@@ -621,7 +867,7 @@ function processImageAt(idx) {
         resolve();
       }, 'image/png');
     };
-    img.src = images[idx].dataUrl;
+    img.src = images[idx].croppedDataUrl || images[idx].dataUrl;
   });
 }
 
@@ -633,6 +879,7 @@ function resetAll() {
   previewArea.classList.remove('show');
   actions.classList.remove('show');
   multiList.classList.remove('show');
+  cropSection.classList.remove('show');
   multiList.innerHTML = '';
   fileInput.value = '';
 }
